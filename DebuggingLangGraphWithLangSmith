@@ -1,0 +1,84 @@
+import os
+from dotenv import load_dotenv
+load_dotenv()
+from typing import Annotated
+from langgraph.graph.state import StateGraph
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode
+from langchain.tools import tool
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import BaseMessage
+from typing_extensions import TypedDict
+from langchain_core.messages import AnyMessage
+from langgraph.graph.message import add_messages
+from typing import Annotated
+from langgraph.graph import StateGraph, START, END
+
+
+os.environ["OPENAI_API_KEY"]=os.getenv("OPENAI_API_KEY")
+os.environ["LANGSMITH_API_KEY"]=os.getenv("LANGCHAIN_API_KEY")
+
+class State(TypedDict):
+    messages: Annotated[list[AnyMessage], add_messages]
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+def make_default_graph():
+    graph=StateGraph(State)
+
+    def call_model(state: State):
+        return {"messages": [llm.invoke(state['messages'])]}
+    
+    graph.add_node("agent", call_model)
+    graph.add_edge(START, "agent")
+    graph.add_edge("agent", END)
+
+    agent=graph.compile()
+    return agent
+
+
+
+def make_alter_graph():
+    """Make a tool-calling agent"""
+
+
+    @tool
+    def addition(a : int, b : int)->int:
+        """Perform Addition of two numbers"""
+        return a + b
+
+
+
+    @tool
+    def multiply(a : int, b : int)->int:
+        """multiply two numbers"""
+        return a * b
+    
+    tool_node = ToolNode([addition, multiply])
+
+    graph=StateGraph(State)
+    llm_with_tool = llm.bind_tools([addition, multiply])
+
+    def call_model(state: State):
+        return {"messages": [llm_with_tool.invoke(state['messages'])]}
+    
+    def should_contine(state: State):
+        if state["messages"][-1].tool_calls:
+            return "tools"
+        else:
+            return END
+    
+    graph.add_node("agent", call_model)
+    graph.add_node("tools", tool_node)
+
+    graph.add_edge("tools", "agent")
+    graph.add_edge(START, "agent")
+    
+    graph.add_conditional_edges("agent", should_contine)
+    
+    agent=graph.compile()
+    return agent
+
+
+
+agent=make_alter_graph()
