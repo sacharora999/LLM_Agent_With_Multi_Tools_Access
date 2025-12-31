@@ -1,0 +1,78 @@
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
+
+from langchain_groq import ChatGroq
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(model="gpt-4o-mini", api_key=OPENAI_API_KEY)
+
+
+from langchain.tools import tool
+
+@tool
+def addition(a : int, b : int)->int:
+    """Perform Addition of two numbers"""
+    return a + b
+
+
+
+@tool
+def multiply(a : int, b : int)->int:
+    """multiply two numbers"""
+    return a * b
+
+from langchain_core.messages import AIMessage, HumanMessage
+from pprint import pprint
+
+
+llm_with_tool = llm.bind_tools([addition, multiply])
+result = llm_with_tool.invoke([HumanMessage(content="What is 2 + 2 ?", name="Sachin")])
+
+for tool_call in result.tool_calls:
+    print(f"Tool : {tool_call['name']}")
+    print(f"Args : {tool_call['args']}")
+
+print(result)
+
+from typing_extensions import TypedDict
+from langchain_core.messages import AnyMessage
+from langgraph.graph.message import add_messages
+from typing import Annotated
+
+class State(TypedDict):
+    messages: Annotated[list[AnyMessage], add_messages]
+
+from IPython.display import Image, display
+from langgraph.graph import StateGraph, START, END
+from langgraph.prebuilt import ToolNode
+from langgraph.prebuilt import tools_condition
+
+def superbot(state: State):
+    return {"messages": [llm_with_tool.invoke(state['messages'])]}
+
+graph=StateGraph(State)
+
+graph.add_node("superbot", superbot)
+graph.add_node("tools", ToolNode([addition, multiply]))
+
+graph.add_edge(START, "superbot")
+graph.add_conditional_edges(
+    "superbot",
+    # If the latest message from assistant is a tool call -> tools_condition routes to tool
+    # If the latest message from assistant is not a tool call -> tools_condition routes to END
+    tools_condition
+)
+
+graph.add_edge("tools", "superbot")
+
+
+graph.add_edge("tools", END)
+
+graph_builder = graph.compile()
+
+from IPython.display import Image, display
+display(Image(graph_builder.get_graph().draw_mermaid_png()))
+
+graph_builder.invoke({'messages': "What is 2 plus 2 and then multiply by 5"})
